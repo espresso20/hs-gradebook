@@ -24,7 +24,9 @@ struct ContentView: View {
             )
         } detail: {
             // Main content area
-            if let student = selectedStudent, let schoolYear = selectedSchoolYear {
+            if selectedView == .help {
+                HelpView()
+            } else if let student = selectedStudent, let schoolYear = selectedSchoolYear {
                 MainContentView(
                     student: student,
                     schoolYear: schoolYear,
@@ -302,7 +304,8 @@ struct MainContentView: View {
             case .reports:
                 ReportsView(student: student, schoolYear: schoolYear)
             case .help:
-                HelpView()
+                // Help is handled separately in ContentView, will never reach here
+                EmptyView()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
