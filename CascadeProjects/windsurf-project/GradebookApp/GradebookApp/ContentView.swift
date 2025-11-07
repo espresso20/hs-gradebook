@@ -2,6 +2,31 @@ import SwiftUI
 import SwiftData
 import Charts
 
+// MARK: - Theme Settings
+enum AppTheme: String, CaseIterable, Identifiable {
+    case system = "System"
+    case light = "Light"
+    case dark = "Dark"
+    
+    var id: String { rawValue }
+    
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+    
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var students: [Student]
@@ -10,6 +35,9 @@ struct ContentView: View {
     @State private var selectedView: NavigationItem = .dashboard
     @State private var showingNewStudentSheet = false
     @State private var showingNewSchoolYearSheet = false
+    @State private var showingSettings = false
+    @AppStorage("appTheme") private var appTheme: AppTheme = .system
+    @StateObject private var cloudSaveManager = CloudSaveManager()
     
     var body: some View {
         NavigationSplitView {
@@ -20,7 +48,9 @@ struct ContentView: View {
                 selectedSchoolYear: $selectedSchoolYear,
                 selectedView: $selectedView,
                 showingNewStudentSheet: $showingNewStudentSheet,
-                showingNewSchoolYearSheet: $showingNewSchoolYearSheet
+                showingNewSchoolYearSheet: $showingNewSchoolYearSheet,
+                appTheme: $appTheme,
+                showingSettings: $showingSettings
             )
         } detail: {
             // Main content area
@@ -36,6 +66,7 @@ struct ContentView: View {
                 WelcomeView(showingNewStudentSheet: $showingNewStudentSheet)
             }
         }
+        .preferredColorScheme(appTheme.colorScheme)
         .sheet(isPresented: $showingNewStudentSheet) {
             NewStudentView()
         }
@@ -43,6 +74,9 @@ struct ContentView: View {
             if let student = selectedStudent {
                 NewSchoolYearView(student: student)
             }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(cloudSaveManager: cloudSaveManager, modelContext: modelContext, isPresented: $showingSettings)
         }
         .onAppear {
             if selectedStudent == nil && !students.isEmpty {
@@ -89,6 +123,8 @@ struct SidebarView: View {
     @Binding var selectedView: NavigationItem
     @Binding var showingNewStudentSheet: Bool
     @Binding var showingNewSchoolYearSheet: Bool
+    @Binding var appTheme: AppTheme
+    @Binding var showingSettings: Bool
     @State private var expandedStudentId: UUID?
     @State private var studentToDelete: Student?
     @State private var showingDeleteStudentConfirmation = false
@@ -96,98 +132,170 @@ struct SidebarView: View {
     @State private var showingDeleteSchoolYearConfirmation = false
     
     var body: some View {
-        List(selection: $selectedView) {
-            Section("Students") {
-                ForEach(students) { student in
-                    DisclosureGroup(
-                        isExpanded: Binding(
-                            get: { expandedStudentId == student.id },
-                            set: { isExpanded in
-                                expandedStudentId = isExpanded ? student.id : nil
-                                if isExpanded {
+        VStack(spacing: 0) {
+            List(selection: $selectedView) {
+                Section("Students") {
+                    ForEach(students) { student in
+                        DisclosureGroup(
+                            isExpanded: Binding(
+                                get: { expandedStudentId == student.id },
+                                set: { isExpanded in
+                                    expandedStudentId = isExpanded ? student.id : nil
+                                    if isExpanded {
+                                        selectedStudent = student
+                                        if let firstYear = student.schoolYears.first {
+                                            selectedSchoolYear = firstYear
+                                        }
+                                    }
+                                }
+                            )
+                        ) {
+                            ForEach(student.schoolYears) { year in
+                                Button(action: {
                                     selectedStudent = student
-                                    if let firstYear = student.schoolYears.first {
-                                        selectedSchoolYear = firstYear
+                                    selectedSchoolYear = year
+                                }) {
+                                    HStack {
+                                        Image(systemName: "calendar")
+                                            .foregroundStyle(.secondary)
+                                        Text(year.year)
+                                        if selectedSchoolYear?.id == year.id {
+                                            Spacer()
+                                            Image(systemName: "checkmark")
+                                                .foregroundStyle(.blue)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        schoolYearToDelete = year
+                                        showingDeleteSchoolYearConfirmation = true
+                                    } label: {
+                                        Label("Delete School Year", systemImage: "trash")
                                     }
                                 }
                             }
-                        )
-                    ) {
-                        ForEach(student.schoolYears) { year in
+                            
                             Button(action: {
                                 selectedStudent = student
-                                selectedSchoolYear = year
+                                showingNewSchoolYearSheet = true
                             }) {
-                                HStack {
-                                    Image(systemName: "calendar")
-                                        .foregroundStyle(.secondary)
-                                    Text(year.year)
-                                    if selectedSchoolYear?.id == year.id {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(.blue)
-                                    }
-                                }
+                                Label("Add School Year", systemImage: "plus.circle")
+                                    .foregroundStyle(.blue)
                             }
                             .buttonStyle(.plain)
-                            .contextMenu {
-                                Button(role: .destructive) {
-                                    schoolYearToDelete = year
-                                    showingDeleteSchoolYearConfirmation = true
-                                } label: {
-                                    Label("Delete School Year", systemImage: "trash")
+                        } label: {
+                            Label(student.name, systemImage: "person.fill")
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                studentToDelete = student
+                                showingDeleteStudentConfirmation = true
+                            } label: {
+                                Label("Delete Student", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+                
+                if selectedStudent != nil && selectedSchoolYear != nil {
+                    Section("Navigation") {
+                        ForEach(NavigationItem.allCases.filter { $0 != .help }, id: \.self) { item in
+                            NavigationLink(value: item) {
+                                Label(item.rawValue, systemImage: item.icon)
+                            }
+                        }
+                    }
+                }
+                
+                Section {
+                    Button(action: { showingNewStudentSheet = true }) {
+                        Label("New Student", systemImage: "plus.circle.fill")
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .listStyle(.sidebar)
+            
+            // Bottom toolbar with Settings, Theme, and Help buttons
+            HStack(spacing: 0) {
+                // Settings button
+                Button(action: { 
+                    showingSettings = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 11))
+                        Text("Settings")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                
+                Divider()
+                    .frame(height: 20)
+                
+                // Theme switcher
+                Menu {
+                    ForEach(AppTheme.allCases) { theme in
+                        Button(action: {
+                            appTheme = theme
+                        }) {
+                            HStack {
+                                Image(systemName: theme.icon)
+                                Text(theme.rawValue)
+                                if appTheme == theme {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
                                 }
                             }
                         }
-                        
-                        Button(action: {
-                            selectedStudent = student
-                            showingNewSchoolYearSheet = true
-                        }) {
-                            Label("Add School Year", systemImage: "plus.circle")
-                                .foregroundStyle(.blue)
-                        }
-                        .buttonStyle(.plain)
-                    } label: {
-                        Label(student.name, systemImage: "person.fill")
                     }
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            studentToDelete = student
-                            showingDeleteStudentConfirmation = true
-                        } label: {
-                            Label("Delete Student", systemImage: "trash")
-                        }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: appTheme.icon)
+                            .font(.system(size: 11))
+                        Text("Theme")
+                            .font(.system(size: 11))
                     }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                 }
-            }
-            
-            Section {
-                Button(action: { showingNewStudentSheet = true }) {
-                    Label("New Student", systemImage: "plus.circle.fill")
-                        .foregroundStyle(.blue)
+                .menuStyle(.borderlessButton)
+                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+                
+                Divider()
+                    .frame(height: 20)
+                
+                // Help button
+                Button(action: { 
+                    selectedView = .help 
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "questionmark.circle.fill")
+                            .font(.system(size: 11))
+                        Text("Help")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
             }
-            
-            if selectedStudent != nil && selectedSchoolYear != nil {
-                Section("Navigation") {
-                    ForEach(NavigationItem.allCases.filter { $0 != .help }, id: \.self) { item in
-                        NavigationLink(value: item) {
-                            Label(item.rawValue, systemImage: item.icon)
-                        }
-                    }
-                }
-            }
-            
-            Section {
-                NavigationLink(value: NavigationItem.help) {
-                    Label("Help & Documentation", systemImage: "questionmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-            }
+            .frame(height: 28)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Color(nsColor: .separatorColor)), alignment: .top)
         }
-        .listStyle(.sidebar)
         .navigationTitle("Gradebook Plus")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -614,6 +722,7 @@ struct HelpView: View {
 
 enum HelpSection: String, CaseIterable {
     case gettingStarted = "Getting Started"
+    case compatibility = "Compatibility"
     case students = "Managing Students"
     case schoolYears = "School Years"
     case subjects = "Subjects & Grading"
@@ -630,6 +739,7 @@ enum HelpSection: String, CaseIterable {
     var icon: String {
         switch self {
         case .gettingStarted: return "flag.fill"
+        case .compatibility: return "checkmark.shield.fill"
         case .students: return "person.fill"
         case .schoolYears: return "calendar"
         case .subjects: return "book.fill"
@@ -651,6 +761,8 @@ struct HelpContentView: View {
         switch section {
         case .gettingStarted:
             GettingStartedContent()
+        case .compatibility:
+            CompatibilityHelpContent()
         case .students:
             StudentsHelpContent()
         case .schoolYears:
@@ -682,7 +794,18 @@ struct GettingStartedContent: View {
         VStack(alignment: .leading, spacing: 16) {
             HelpHeader(title: "Getting Started with Gradebook Plus")
             
-            HelpParagraph(text: "Gradebook Plus is a comprehensive homeschool grade tracking application designed to help you manage students, subjects, assignments, and generate detailed reports.")
+            VStack(alignment: .leading, spacing: 4) {
+                HelpParagraph(text: "Gradebook Plus is a comprehensive homeschool grade tracking application designed to help you manage students, subjects, assignments, and generate detailed reports.")
+                
+                Text("Version 1.0.0")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+                
+                Text("Written by Adam Roffler")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             
             HelpSubheader(title: "Quick Start Guide")
             HelpStep(number: 1, title: "Create a Student", description: "Click the 'New Student' button in the sidebar or toolbar to add your first student.")
@@ -692,6 +815,40 @@ struct GettingStartedContent: View {
             HelpStep(number: 5, title: "Track Progress", description: "View the Dashboard for an overview and generate Reports for detailed analysis.")
             
             HelpTip(text: "Pro Tip: Start by setting up all your subjects first, then add assignments as you go throughout the school year.")
+        }
+    }
+}
+
+struct CompatibilityHelpContent: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HelpHeader(title: "System Requirements & Compatibility")
+            
+            HelpSubheader(title: "Minimum Requirements")
+            HelpParagraph(text: "Gradebook Plus requires macOS 14.0 (Sonoma) or later to run.")
+            
+            HelpSubheader(title: "Supported macOS Versions")
+            HelpBullet(text: "macOS 14.0 Sonoma (2023) ✅")
+            HelpBullet(text: "macOS 15.0 Sequoia (2024) ✅")
+            HelpBullet(text: "Future macOS versions ✅")
+            
+            HelpSubheader(title: "Compatible Mac Models")
+            HelpParagraph(text: "Any Mac that can run macOS Sonoma or later is compatible, including:")
+            HelpBullet(text: "2019 Mac Pro and later")
+            HelpBullet(text: "2018 MacBook Air and later")
+            HelpBullet(text: "2018 Mac mini and later")
+            HelpBullet(text: "2018 MacBook Pro and later")
+            HelpBullet(text: "2019 iMac and later")
+            HelpBullet(text: "2022 Mac Studio and later")
+            HelpBullet(text: "All Macs with Apple Silicon (M1, M2, M3, M4)")
+            
+            HelpSubheader(title: "Older macOS Versions")
+            HelpParagraph(text: "Unfortunately, macOS 13 (Ventura) and earlier versions are not supported.")
+            
+            HelpTip(text: "If your Mac supports macOS Sonoma, you can upgrade for free from System Settings → General → Software Update.")
+            
+            HelpSubheader(title: "Data Storage")
+            HelpParagraph(text: "All data is stored locally on your Mac using SwiftData. Your gradebook information is private and never leaves your computer.")
         }
     }
 }
@@ -1028,6 +1185,330 @@ struct HelpWarning: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(.orange.opacity(0.3), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Settings View
+
+struct SettingsView: View {
+    @ObservedObject var cloudSaveManager: CloudSaveManager
+    let modelContext: ModelContext
+    @Binding var isPresented: Bool
+    @State private var selectedTab = 0
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Settings")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Spacer()
+                Button("Done") {
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding()
+            
+            Divider()
+            
+            // Tab Selection
+            Picker("", selection: $selectedTab) {
+                Text("Cloud Save").tag(0)
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            
+            Divider()
+            
+            // Content
+            ScrollView {
+                switch selectedTab {
+                case 0:
+                    CloudSettingsContent(cloudSaveManager: cloudSaveManager, modelContext: modelContext)
+                        .padding()
+                default:
+                    EmptyView()
+                }
+            }
+        }
+        .frame(width: 700, height: 600)
+    }
+}
+
+// MARK: - Cloud Save Settings Content
+
+struct CloudSettingsContent: View {
+    @ObservedObject var cloudSaveManager: CloudSaveManager
+    let modelContext: ModelContext
+    
+    @State private var accessKey = ""
+    @State private var secretKey = ""
+    @State private var bucket = ""
+    @State private var region = "us-east-1"
+    @State private var showingCredentialForm = false
+    @State private var showingSaveConfirmation = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            // Description
+            Text("Configure automatic cloud saving to AWS S3. Your data will be saved to your personal S3 bucket on app close and can be manually saved anytime.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+            
+            // Credentials Status
+            HStack {
+                Image(systemName: cloudSaveManager.credentialsConfigured ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(cloudSaveManager.credentialsConfigured ? .green : .red)
+                    .font(.title2)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("AWS Credentials")
+                        .font(.headline)
+                    Text(cloudSaveManager.credentialsConfigured ? "Configured ✓" : "Not Configured")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                if cloudSaveManager.credentialsConfigured {
+                    Button("Reconfigure") {
+                        showingCredentialForm = true
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button("Configure") {
+                        showingCredentialForm = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding()
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+            
+            if cloudSaveManager.credentialsConfigured {
+                Divider()
+                
+                // Last Save Info
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Save Status")
+                        .font(.headline)
+                    
+                    if let lastSave = cloudSaveManager.lastSaveDate {
+                        HStack {
+                            Image(systemName: "clock.fill")
+                                .foregroundStyle(.blue)
+                            Text("Last saved: \(lastSave.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.body)
+                        }
+                    } else {
+                        HStack {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(.secondary)
+                            Text("No cloud saves yet")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // Manual Save Button
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Manual Save")
+                        .font(.headline)
+                    
+                    Button(action: {
+                        Task {
+                            await cloudSaveManager.saveToCloud(modelContext: modelContext)
+                            showingSaveConfirmation = true
+                        }
+                    }) {
+                        HStack {
+                            if cloudSaveManager.isSaving {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .padding(.trailing, 4)
+                            } else {
+                                Image(systemName: "arrow.up.doc.fill")
+                            }
+                            Text(cloudSaveManager.isSaving ? "Saving..." : "Save to Cloud Now")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(cloudSaveManager.isSaving)
+                    
+                    if let error = cloudSaveManager.saveError {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+                
+                Divider()
+                
+                // Auto-save info
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Automatic Save")
+                        .font(.headline)
+                    Text("Your gradebook data automatically saves to the cloud when you close the app.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Auto-save on quit: Enabled")
+                            .font(.body)
+                    }
+                }
+            }
+            
+            Divider()
+            
+            // Security Notice
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.shield.fill")
+                    .foregroundStyle(.blue)
+                    .font(.title3)
+                
+                Text("Your AWS credentials are stored securely in macOS Keychain and encrypted. Once configured, they cannot be viewed again for security.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+            
+            // File Format Notice
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.title3)
+                
+                Text("Save will create a new file in your S3 bucket each time. Format: gradebook-YYYY-MM-DDTHH-MM-SS.json")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .sheet(isPresented: $showingCredentialForm) {
+            CredentialConfigurationSheet(
+                cloudSaveManager: cloudSaveManager,
+                accessKey: $accessKey,
+                secretKey: $secretKey,
+                bucket: $bucket,
+                region: $region,
+                isPresented: $showingCredentialForm
+            )
+        }
+        .alert("Saved to Cloud", isPresented: $showingSaveConfirmation) {
+            Button("OK") { }
+        } message: {
+            Text("Your gradebook has been successfully saved to AWS S3.")
+        }
+    }
+}
+
+struct CredentialConfigurationSheet: View {
+    @ObservedObject var cloudSaveManager: CloudSaveManager
+    @Binding var accessKey: String
+    @Binding var secretKey: String
+    @Binding var bucket: String
+    @Binding var region: String
+    @Binding var isPresented: Bool
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            HStack {
+                Text("AWS S3 Configuration")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Spacer()
+                Button("Cancel") {
+                    isPresented = false
+                }
+                .keyboardShortcut(.escape)
+            }
+            
+            Form {
+                Section("AWS Credentials") {
+                    TextField("Access Key ID", text: $accessKey)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    SecureField("Secret Access Key", text: $secretKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                Section("S3 Bucket Configuration") {
+                    TextField("Bucket Name", text: $bucket)
+                        .textFieldStyle(.roundedBorder)
+                    
+                    Picker("Region", selection: $region) {
+                        Text("US East (N. Virginia)").tag("us-east-1")
+                        Text("US East (Ohio)").tag("us-east-2")
+                        Text("US West (N. California)").tag("us-west-1")
+                        Text("US West (Oregon)").tag("us-west-2")
+                        Text("EU (Ireland)").tag("eu-west-1")
+                        Text("EU (Frankfurt)").tag("eu-central-1")
+                        Text("Asia Pacific (Tokyo)").tag("ap-northeast-1")
+                        Text("Asia Pacific (Sydney)").tag("ap-southeast-2")
+                    }
+                }
+                
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.shield.fill")
+                                .foregroundStyle(.blue)
+                            Text("Security Notice")
+                                .font(.headline)
+                        }
+                        
+                        Text("Credentials are encrypted and stored in macOS Keychain. Once saved, they cannot be viewed again. To change credentials, you must enter new ones.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    isPresented = false
+                }
+                .keyboardShortcut(.cancelAction)
+                
+                Button("Save Credentials") {
+                    cloudSaveManager.saveCredentials(
+                        accessKey: accessKey,
+                        secretKey: secretKey,
+                        bucket: bucket,
+                        region: region
+                    )
+                    accessKey = ""
+                    secretKey = ""
+                    bucket = ""
+                    region = "us-east-1"
+                    isPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(accessKey.isEmpty || secretKey.isEmpty || bucket.isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(30)
+        .frame(width: 600, height: 550)
     }
 }
 
