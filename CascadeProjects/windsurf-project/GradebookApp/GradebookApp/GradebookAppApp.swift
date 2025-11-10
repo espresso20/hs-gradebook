@@ -5,12 +5,13 @@ import AppKit
 @main
 struct GradebookAppApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var cloudSaveManager = CloudSaveManager()
+    @StateObject private var backupManager = BackupManager()
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = false
     
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(cloudSaveManager)
+                .environmentObject(backupManager)
         }
         .modelContainer(for: [
             Student.self,
@@ -21,7 +22,7 @@ struct GradebookAppApp: App {
             Activity.self,
             FieldTrip.self,
             Course.self
-        ])
+        ], inMemory: false, isAutosaveEnabled: true, isUndoEnabled: false)
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .commands {
@@ -36,17 +37,8 @@ struct GradebookAppApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    // iCloud sync is automatic - no need for manual save on quit
     func applicationWillTerminate(_ notification: Notification) {
-        // Auto-save to cloud on quit
-        Task {
-            let cloudSaveManager = CloudSaveManager()
-            if cloudSaveManager.credentialsConfigured {
-                // Get model context from shared container
-                if let container = try? ModelContainer(for: Student.self, SchoolYear.self, Subject.self, Assignment.self, Book.self, Activity.self, FieldTrip.self, Course.self) {
-                    let context = ModelContext(container)
-                    await cloudSaveManager.saveToCloud(modelContext: context)
-                }
-            }
-        }
+        // SwiftData with CloudKit handles sync automatically
     }
 }

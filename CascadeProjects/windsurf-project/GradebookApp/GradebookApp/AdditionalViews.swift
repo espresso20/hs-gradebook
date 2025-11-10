@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import Charts
+import AppKit
 
 // MARK: - Books View
 struct BooksView: View {
@@ -135,13 +136,16 @@ struct NewBookView: View {
             Form {
                 Section("Book Information") {
                     TextField("Title", text: $title)
+                        .characterLimit(CharacterLimits.title, text: $title)
                     TextField("Author", text: $author)
+                        .characterLimit(CharacterLimits.title, text: $author)
                     DatePicker("Date Finished", selection: $dateRead, displayedComponents: .date)
                 }
                 
                 Section("Notes") {
                     TextEditor(text: $notes)
                         .frame(height: 100)
+                        .characterLimit(CharacterLimits.notes, text: $notes)
                 }
             }
             .formStyle(.grouped)
@@ -270,7 +274,9 @@ struct NewActivityView: View {
             Form {
                 Section("Activity Details") {
                     TextField("Description", text: $activityDescription)
+                        .characterLimit(CharacterLimits.description, text: $activityDescription)
                     TextField("Role", text: $role)
+                        .characterLimit(CharacterLimits.title, text: $role)
                     DatePicker("Date", selection: $date, displayedComponents: .date)
                 }
             }
@@ -409,13 +415,16 @@ struct NewFieldTripView: View {
             Form {
                 Section("Field Trip Details") {
                     TextField("Description", text: $tripDescription)
+                        .characterLimit(CharacterLimits.description, text: $tripDescription)
                     TextField("Location", text: $location)
+                        .characterLimit(CharacterLimits.title, text: $location)
                     DatePicker("Date", selection: $date, displayedComponents: .date)
                 }
                 
                 Section("Notes") {
                     TextEditor(text: $notes)
                         .frame(height: 80)
+                        .characterLimit(CharacterLimits.notes, text: $notes)
                 }
             }
             .formStyle(.grouped)
@@ -555,16 +564,19 @@ struct NewCourseView: View {
             Form {
                 Section("Course Information") {
                     TextField("Course Title", text: $title)
+                        .characterLimit(CharacterLimits.title, text: $title)
                 }
                 
                 Section("Description") {
                     TextEditor(text: $courseDescription)
                         .frame(height: 100)
+                        .characterLimit(CharacterLimits.description, text: $courseDescription)
                 }
                 
                 Section("Resources Used") {
                     TextEditor(text: $resources)
                         .frame(height: 80)
+                        .characterLimit(CharacterLimits.notes, text: $resources)
                 }
             }
             .formStyle(.grouped)
@@ -593,6 +605,14 @@ struct NewCourseView: View {
 struct ReportsView: View {
     let student: Student
     let schoolYear: SchoolYear
+    @State private var showingExportSuccess = false
+    @State private var exportError: String?
+    @AppStorage("gradingScaleType") private var gradingScaleType: String = GradingScaleType.granular.rawValue
+    
+    private var currentGradingScale: [GradeScaleItem] {
+        let scaleType = GradingScaleType(rawValue: gradingScaleType) ?? .granular
+        return GradingScaleDefinition.scale(for: scaleType)
+    }
     
     var overallGPA: Double {
         let grades = schoolYear.subjects.map { $0.weightedGrade }
@@ -602,6 +622,46 @@ struct ReportsView: View {
     
     var totalCredits: Double {
         schoolYear.subjects.reduce(0) { $0 + $1.credits }
+    }
+    
+    func exportToPDF() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = "\(student.name) - \(schoolYear.year) Grade Report.pdf"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.title = "Export Grade Report as PDF"
+        panel.message = "Choose a location to save the grade report"
+        
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                let renderer = ImageRenderer(content: ReportContentView(
+                    student: student,
+                    schoolYear: schoolYear,
+                    overallGPA: overallGPA,
+                    totalCredits: totalCredits
+                ))
+                
+                renderer.render { size, renderer in
+                    var mediaBox = CGRect(origin: .zero, size: size)
+                    
+                    guard let consumer = CGDataConsumer(url: url as CFURL),
+                          let pdfContext = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+                        exportError = "Failed to create PDF context"
+                        return
+                    }
+                    
+                    pdfContext.beginPDFPage(nil)
+                    renderer(pdfContext)
+                    pdfContext.endPDFPage()
+                    pdfContext.closePDF()
+                    
+                    DispatchQueue.main.async {
+                        showingExportSuccess = true
+                    }
+                }
+            }
+        }
     }
     
     var body: some View {
@@ -727,7 +787,7 @@ struct ReportsView: View {
                         .fontWeight(.semibold)
                     
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                        ForEach(gradingScale, id: \.letter) { grade in
+                        ForEach(currentGradingScale) { grade in
                             HStack {
                                 Text(grade.letter)
                                     .fontWeight(.semibold)
@@ -743,9 +803,7 @@ struct ReportsView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
                 
                 // Export Button
-                Button(action: {
-                    // TODO: Add PDF export functionality
-                }) {
+                Button(action: exportToPDF) {
                     Label("Export as PDF", systemImage: "square.and.arrow.up")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
@@ -758,29 +816,190 @@ struct ReportsView: View {
             .padding()
         }
         .navigationTitle("Grade Report")
+        .alert("Export Successful", isPresented: $showingExportSuccess) {
+            Button("OK") { }
+        } message: {
+            Text("Grade report has been exported as PDF.")
+        }
+        .alert("Export Failed", isPresented: .constant(exportError != nil)) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "Unknown error")
+        }
     }
 }
 
-struct GradeScale {
-    let letter: String
-    let range: String
+// MARK: - Report Content View (for PDF export)
+struct ReportContentView: View {
+    let student: Student
+    let schoolYear: SchoolYear
+    let overallGPA: Double
+    let totalCredits: Double
+    
+    private var currentGradingScale: [GradeScaleItem] {
+        let scaleType = UserDefaults.standard.gradingScaleType
+        return GradingScaleDefinition.scale(for: scaleType)
+    }
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            // Header
+            VStack(spacing: 8) {
+                Text("GRADE REPORT")
+                    .font(.system(size: 32, weight: .bold))
+                Text("Academic Transcript")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 40)
+            
+            Divider()
+            
+            // Student Information
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Student Name:")
+                        .fontWeight(.semibold)
+                        .frame(width: 150, alignment: .leading)
+                    Text(student.name)
+                }
+                HStack {
+                    Text("Grade Level:")
+                        .fontWeight(.semibold)
+                        .frame(width: 150, alignment: .leading)
+                    Text(student.grade.isEmpty ? "N/A" : student.grade)
+                }
+                HStack {
+                    Text("School:")
+                        .fontWeight(.semibold)
+                        .frame(width: 150, alignment: .leading)
+                    Text(student.school.isEmpty ? "N/A" : student.school)
+                }
+                HStack {
+                    Text("School Year:")
+                        .fontWeight(.semibold)
+                        .frame(width: 150, alignment: .leading)
+                    Text(schoolYear.year)
+                }
+                HStack {
+                    Text("Total School Days:")
+                        .fontWeight(.semibold)
+                        .frame(width: 150, alignment: .leading)
+                    Text("\(schoolYear.totalSchoolDays)")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 40)
+            
+            Divider()
+            
+            // GPA and Credits
+            HStack(spacing: 60) {
+                VStack(spacing: 4) {
+                    Text("Overall GPA")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Text("\(overallGPA, specifier: "%.2f")")
+                        .font(.system(size: 36, weight: .bold))
+                }
+                
+                VStack(spacing: 4) {
+                    Text("Total Credits")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Text("\(totalCredits, specifier: "%.1f")")
+                        .font(.system(size: 36, weight: .bold))
+                }
+            }
+            .padding(.vertical, 20)
+            
+            Divider()
+            
+            // Course Grades
+            VStack(alignment: .leading, spacing: 16) {
+                Text("COURSES & GRADES")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Course Name")
+                            .fontWeight(.bold)
+                        Text("Credits")
+                            .fontWeight(.bold)
+                            .gridColumnAlignment(.trailing)
+                        Text("Percentage")
+                            .fontWeight(.bold)
+                            .gridColumnAlignment(.trailing)
+                        Text("Letter Grade")
+                            .fontWeight(.bold)
+                            .gridColumnAlignment(.center)
+                    }
+                    .font(.headline)
+                    
+                    Divider()
+                    
+                    ForEach(schoolYear.subjects.sorted(by: { $0.order < $1.order })) { subject in
+                        GridRow {
+                            Text(subject.name)
+                            Text("\(subject.credits, specifier: "%.1f")")
+                                .gridColumnAlignment(.trailing)
+                            Text("\(subject.weightedGrade, specifier: "%.1f")%")
+                                .gridColumnAlignment(.trailing)
+                            Text(subject.letterGrade)
+                                .fontWeight(.semibold)
+                                .gridColumnAlignment(.center)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 40)
+            
+            Divider()
+            
+            // Grading Scale
+            VStack(alignment: .leading, spacing: 12) {
+                Text("GRADING SCALE")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    ForEach(currentGradingScale) { grade in
+                        HStack {
+                            Text(grade.letter)
+                                .fontWeight(.semibold)
+                                .frame(width: 30, alignment: .leading)
+                            Text("=")
+                            Text(grade.range)
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 40)
+            
+            Spacer()
+            
+            // Footer
+            VStack(spacing: 4) {
+                Text("Generated: \(Date().formatted(date: .long, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Gradebook Plus")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 20)
+        }
+        .frame(width: 612, height: 792) // US Letter size in points (8.5" x 11")
+        .background(Color.white)
+    }
 }
 
-let gradingScale: [GradeScale] = [
-    GradeScale(letter: "A+", range: "98-100"),
-    GradeScale(letter: "A", range: "93-97"),
-    GradeScale(letter: "A-", range: "90-92"),
-    GradeScale(letter: "B+", range: "88-89"),
-    GradeScale(letter: "B", range: "83-87"),
-    GradeScale(letter: "B-", range: "80-82"),
-    GradeScale(letter: "C+", range: "78-79"),
-    GradeScale(letter: "C", range: "73-77"),
-    GradeScale(letter: "C-", range: "70-72"),
-    GradeScale(letter: "D+", range: "68-69"),
-    GradeScale(letter: "D", range: "63-67"),
-    GradeScale(letter: "D-", range: "60-62"),
-    GradeScale(letter: "F", range: "0-59")
-]
+// Note: Grading scale is now dynamically loaded from GradingScale.swift
+// based on user's preference (granular vs simple)
 
 #Preview {
     ReportsView(student: Student(name: "John Doe"), schoolYear: SchoolYear(year: "2024-2025"))

@@ -135,21 +135,8 @@ final class Subject {
     
     var letterGrade: String {
         let grade = weightedGrade
-        switch grade {
-        case 98...100: return "A+"
-        case 93..<98: return "A"
-        case 90..<93: return "A-"
-        case 88..<90: return "B+"
-        case 83..<88: return "B"
-        case 80..<83: return "B-"
-        case 78..<80: return "C+"
-        case 73..<78: return "C"
-        case 70..<73: return "C-"
-        case 68..<70: return "D+"
-        case 63..<68: return "D"
-        case 60..<63: return "D-"
-        default: return "F"
-        }
+        let scaleType = UserDefaults.standard.gradingScaleType
+        return GradingScaleDefinition.letterGrade(for: grade, scaleType: scaleType)
     }
 }
 

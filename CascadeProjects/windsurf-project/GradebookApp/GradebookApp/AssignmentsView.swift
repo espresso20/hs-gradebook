@@ -150,55 +150,143 @@ struct NewAssignmentView: View {
     let subject: Subject
     
     @State private var title = ""
-    @State private var type: AssignmentType = .daily
+    @State private var type: AssignmentType
     @State private var date = Date()
     @State private var score: Double = 0
     @State private var maxScore: Double = 100
     @State private var notes = ""
     
+    init(subject: Subject) {
+        self.subject = subject
+        // Set initial type to first enabled type
+        let enabledTypes = Self.enabledTypes(for: subject)
+        _type = State(initialValue: enabledTypes.first ?? .daily)
+    }
+    
+    private static func enabledTypes(for subject: Subject) -> [AssignmentType] {
+        AssignmentType.allCases.filter { type in
+            switch type {
+            case .daily: return subject.dailyWeight > 0
+            case .quiz: return subject.quizWeight > 0
+            case .test: return subject.testWeight > 0
+            case .project: return subject.projectWeight > 0
+            case .other: return subject.otherWeight > 0
+            }
+        }
+    }
+    
+    private var enabledTypes: [AssignmentType] {
+        Self.enabledTypes(for: subject)
+    }
+    
+    private var percentage: Double {
+        guard maxScore > 0 else { return 0 }
+        return (score / maxScore) * 100
+    }
+    
     var body: some View {
         NavigationStack {
             Form {
                 Section("Assignment Details") {
-                    TextField("Title", text: $title)
-                    
-                    Picker("Type", selection: $type) {
-                        ForEach(AssignmentType.allCases, id: \.self) { type in
-                            Text(type.rawValue).tag(type)
-                        }
+                    LabeledContent("Title") {
+                        TextField("Assignment name", text: $title)
+                            .multilineTextAlignment(.trailing)
+                            .characterLimit(CharacterLimits.title, text: $title)
                     }
                     
-                    DatePicker("Date", selection: $date, displayedComponents: .date)
+                    LabeledContent("Type") {
+                        Picker("Type", selection: $type) {
+                            ForEach(enabledTypes, id: \.self) { type in
+                                Text(type.rawValue).tag(type)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                    
+                    LabeledContent("Date") {
+                        DatePicker("Date", selection: $date, displayedComponents: .date)
+                            .labelsHidden()
+                    }
                 }
                 
                 Section("Grading") {
-                    HStack {
-                        Text("Score")
-                        Spacer()
-                        TextField("Score", value: $score, format: .number)
-                            .frame(width: 60)
-                            .multilineTextAlignment(.trailing)
+                    VStack(spacing: 16) {
+                        HStack(spacing: 16) {
+                            // Score Input
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Score")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                
+                                HStack {
+                                    TextField("0", value: $score, format: .number)
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.center)
+                                        .font(.title3)
+                                        .frame(height: 44)
+                                        .padding(.horizontal, 12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.primary.opacity(0.05))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                                        )
+                                }
+                            }
+                            
+                            Text("/")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 24)
+                            
+                            // Max Score Input
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Max Score")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                
+                                HStack {
+                                    TextField("100", value: $maxScore, format: .number)
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.center)
+                                        .font(.title3)
+                                        .frame(height: 44)
+                                        .padding(.horizontal, 12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.primary.opacity(0.05))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                                        )
+                                }
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        // Percentage Display
+                        HStack {
+                            Text("Percentage")
+                                .font(.headline)
+                            Spacer()
+                            Text("\(percentage, specifier: "%.1f")%")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(gradeColor(for: percentage))
+                        }
                     }
-                    
-                    HStack {
-                        Text("Max Score")
-                        Spacer()
-                        TextField("Max Score", value: $maxScore, format: .number)
-                            .frame(width: 60)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    
-                    HStack {
-                        Text("Percentage")
-                        Spacer()
-                        Text("\((score / maxScore * 100), specifier: "%.1f")%")
-                            .fontWeight(.semibold)
-                    }
+                    .padding(.vertical, 8)
                 }
                 
-                Section("Notes") {
+                Section("Notes (Optional)") {
                     TextEditor(text: $notes)
-                        .frame(height: 100)
+                        .frame(minHeight: 80, maxHeight: 150)
+                        .scrollContentBackground(.hidden)
+                        .characterLimit(CharacterLimits.notes, text: $notes)
                 }
             }
             .formStyle(.grouped)
@@ -227,6 +315,15 @@ struct NewAssignmentView: View {
         }
         .frame(minWidth: 500, idealWidth: 550, maxWidth: 600, minHeight: 500, idealHeight: 550, maxHeight: 700)
         .padding()
+    }
+    
+    private func gradeColor(for percentage: Double) -> Color {
+        switch percentage {
+        case 90...100: return .green
+        case 80..<90: return .blue
+        case 70..<80: return .orange
+        default: return .red
+        }
     }
 }
 

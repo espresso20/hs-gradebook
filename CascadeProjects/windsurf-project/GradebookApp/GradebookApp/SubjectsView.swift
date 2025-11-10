@@ -148,11 +148,37 @@ struct NewSubjectView: View {
         dailyWeight + quizWeight + testWeight + projectWeight + otherWeight
     }
     
+    private func redistributeWeights(enabling: String?) {
+        let enabledWeights = [
+            ("daily", dailyWeight),
+            ("quiz", quizWeight),
+            ("test", testWeight),
+            ("project", projectWeight),
+            ("other", otherWeight)
+        ].filter { $0.1 > 0 || $0.0 == enabling }
+        
+        guard !enabledWeights.isEmpty else { return }
+        
+        let equalWeight = 100.0 / Double(enabledWeights.count)
+        
+        for (type, _) in enabledWeights {
+            switch type {
+            case "daily": dailyWeight = equalWeight
+            case "quiz": quizWeight = equalWeight
+            case "test": testWeight = equalWeight
+            case "project": projectWeight = equalWeight
+            case "other": otherWeight = equalWeight
+            default: break
+            }
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             Form {
                 Section("Subject Information") {
                     TextField("Subject Name", text: $name)
+                        .characterLimit(CharacterLimits.title, text: $name)
                     
                     HStack {
                         Text("Credits")
@@ -167,20 +193,112 @@ struct NewSubjectView: View {
                     ColorPicker("Color", selection: $color)
                 }
                 
-                Section(header: Text("Assignment Type Weights"), footer: Text("Total weight must equal 100%")) {
-                    WeightSlider(title: "Daily", value: $dailyWeight)
-                    WeightSlider(title: "Quizzes", value: $quizWeight)
-                    WeightSlider(title: "Tests", value: $testWeight)
-                    WeightSlider(title: "Projects", value: $projectWeight)
-                    WeightSlider(title: "Other", value: $otherWeight)
-                    
-                    HStack {
-                        Text("Total")
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Text("\(Int(totalWeight))%")
-                            .foregroundStyle(totalWeight == 100 ? .green : .red)
-                            .fontWeight(.bold)
+                Section(header: Text("Assignment Type Weights")) {
+                    VStack(spacing: 16) {
+                        WeightToggleRow(
+                            title: "Daily",
+                            isEnabled: Binding(
+                                get: { dailyWeight > 0 },
+                                set: { enabled in
+                                    if enabled && dailyWeight == 0 {
+                                        redistributeWeights(enabling: "daily")
+                                    } else if !enabled {
+                                        dailyWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $dailyWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Quizzes",
+                            isEnabled: Binding(
+                                get: { quizWeight > 0 },
+                                set: { enabled in
+                                    if enabled && quizWeight == 0 {
+                                        redistributeWeights(enabling: "quiz")
+                                    } else if !enabled {
+                                        quizWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $quizWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Tests",
+                            isEnabled: Binding(
+                                get: { testWeight > 0 },
+                                set: { enabled in
+                                    if enabled && testWeight == 0 {
+                                        redistributeWeights(enabling: "test")
+                                    } else if !enabled {
+                                        testWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $testWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Projects",
+                            isEnabled: Binding(
+                                get: { projectWeight > 0 },
+                                set: { enabled in
+                                    if enabled && projectWeight == 0 {
+                                        redistributeWeights(enabling: "project")
+                                    } else if !enabled {
+                                        projectWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $projectWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Other",
+                            isEnabled: Binding(
+                                get: { otherWeight > 0 },
+                                set: { enabled in
+                                    if enabled && otherWeight == 0 {
+                                        redistributeWeights(enabling: "other")
+                                    } else if !enabled {
+                                        otherWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $otherWeight
+                        )
+                        
+                        Divider()
+                            .padding(.vertical, 4)
+                        
+                        HStack {
+                            Text("Total")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Text("\(Int(totalWeight))%")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(totalWeight == 100 ? .green : .red)
+                        }
+                        .padding(.vertical, 4)
+                        
+                        if totalWeight != 100 {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text("Total must equal 100%")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     .padding(.vertical, 8)
                 }
@@ -217,20 +335,288 @@ struct NewSubjectView: View {
     }
 }
 
-struct WeightSlider: View {
-    let title: String
-    @Binding var value: Double
+// MARK: - Edit Subject View
+
+struct EditSubjectView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    let subject: Subject
+    
+    @State private var name: String
+    @State private var credits: Double
+    @State private var color: Color
+    @State private var dailyWeight: Double
+    @State private var quizWeight: Double
+    @State private var testWeight: Double
+    @State private var projectWeight: Double
+    @State private var otherWeight: Double
+    
+    init(subject: Subject) {
+        self.subject = subject
+        _name = State(initialValue: subject.name)
+        _credits = State(initialValue: subject.credits)
+        _color = State(initialValue: Color(hex: subject.color) ?? .blue)
+        _dailyWeight = State(initialValue: subject.dailyWeight * 100)
+        _quizWeight = State(initialValue: subject.quizWeight * 100)
+        _testWeight = State(initialValue: subject.testWeight * 100)
+        _projectWeight = State(initialValue: subject.projectWeight * 100)
+        _otherWeight = State(initialValue: subject.otherWeight * 100)
+    }
+    
+    private var totalWeight: Double {
+        dailyWeight + quizWeight + testWeight + projectWeight + otherWeight
+    }
+    
+    private func redistributeWeights(enabling: String?) {
+        let enabledWeights = [
+            ("daily", dailyWeight),
+            ("quiz", quizWeight),
+            ("test", testWeight),
+            ("project", projectWeight),
+            ("other", otherWeight)
+        ].filter { $0.1 > 0 || $0.0 == enabling }
+        
+        guard !enabledWeights.isEmpty else { return }
+        
+        let equalWeight = 100.0 / Double(enabledWeights.count)
+        
+        for (type, _) in enabledWeights {
+            switch type {
+            case "daily": dailyWeight = equalWeight
+            case "quiz": quizWeight = equalWeight
+            case "test": testWeight = equalWeight
+            case "project": projectWeight = equalWeight
+            case "other": otherWeight = equalWeight
+            default: break
+            }
+        }
+    }
     
     var body: some View {
-        VStack(spacing: 4) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text("\(Int(value))%")
-                    .foregroundStyle(.secondary)
+        NavigationStack {
+            Form {
+                Section("Subject Information") {
+                    TextField("Subject Name", text: $name)
+                        .characterLimit(CharacterLimits.title, text: $name)
+                    
+                    HStack {
+                        Text("Credits")
+                        Spacer()
+                        TextField("Credits", value: $credits, format: .number)
+                            .frame(width: 60)
+                            .multilineTextAlignment(.trailing)
+                        Stepper("", value: $credits, in: 0...10, step: 0.5)
+                            .labelsHidden()
+                    }
+                    
+                    ColorPicker("Color", selection: $color)
+                }
+                
+                Section(header: Text("Assignment Type Weights")) {
+                    VStack(spacing: 16) {
+                        WeightToggleRow(
+                            title: "Daily",
+                            isEnabled: Binding(
+                                get: { dailyWeight > 0 },
+                                set: { enabled in
+                                    if enabled && dailyWeight == 0 {
+                                        redistributeWeights(enabling: "daily")
+                                    } else if !enabled {
+                                        dailyWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $dailyWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Quizzes",
+                            isEnabled: Binding(
+                                get: { quizWeight > 0 },
+                                set: { enabled in
+                                    if enabled && quizWeight == 0 {
+                                        redistributeWeights(enabling: "quiz")
+                                    } else if !enabled {
+                                        quizWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $quizWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Tests",
+                            isEnabled: Binding(
+                                get: { testWeight > 0 },
+                                set: { enabled in
+                                    if enabled && testWeight == 0 {
+                                        redistributeWeights(enabling: "test")
+                                    } else if !enabled {
+                                        testWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $testWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Projects",
+                            isEnabled: Binding(
+                                get: { projectWeight > 0 },
+                                set: { enabled in
+                                    if enabled && projectWeight == 0 {
+                                        redistributeWeights(enabling: "project")
+                                    } else if !enabled {
+                                        projectWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $projectWeight
+                        )
+                        
+                        WeightToggleRow(
+                            title: "Other",
+                            isEnabled: Binding(
+                                get: { otherWeight > 0 },
+                                set: { enabled in
+                                    if enabled && otherWeight == 0 {
+                                        redistributeWeights(enabling: "other")
+                                    } else if !enabled {
+                                        otherWeight = 0
+                                        redistributeWeights(enabling: nil)
+                                    }
+                                }
+                            ),
+                            value: $otherWeight
+                        )
+                        
+                        Divider()
+                            .padding(.vertical, 4)
+                        
+                        HStack {
+                            Text("Total")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Text("\(Int(totalWeight))%")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(totalWeight == 100 ? .green : .red)
+                        }
+                        .padding(.vertical, 4)
+                        
+                        if totalWeight != 100 {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                Text("Total must equal 100%")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                if !subject.assignments.isEmpty {
+                    Section {
+                        HStack(spacing: 8) {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundStyle(.blue)
+                            Text("Changing weights will automatically recalculate grades for \(subject.assignments.count) existing assignment\(subject.assignments.count == 1 ? "" : "s").")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
-            Slider(value: $value, in: 0...100, step: 5)
+            .formStyle(.grouped)
+            .navigationTitle("Edit Subject")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        subject.name = name
+                        subject.credits = credits
+                        subject.color = color.toHex() ?? "#007AFF"
+                        subject.dailyWeight = dailyWeight / 100
+                        subject.quizWeight = quizWeight / 100
+                        subject.testWeight = testWeight / 100
+                        subject.projectWeight = projectWeight / 100
+                        subject.otherWeight = otherWeight / 100
+                        dismiss()
+                    }
+                    .disabled(name.isEmpty || totalWeight != 100)
+                }
+            }
         }
+        .frame(minWidth: 500, idealWidth: 550, maxWidth: 600, minHeight: 550, idealHeight: 600, maxHeight: 700)
+        .padding()
+    }
+}
+
+// MARK: - Weight Toggle Row
+
+struct WeightToggleRow: View {
+    let title: String
+    @Binding var isEnabled: Bool
+    @Binding var value: Double
+    @FocusState private var isFocused: Bool
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Toggle
+            Toggle(isOn: $isEnabled) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(isEnabled ? .primary : .secondary)
+            }
+            .toggleStyle(.switch)
+            .frame(width: 180)
+            
+            Spacer()
+            
+            // Percentage Input
+            HStack(spacing: 4) {
+                TextField(
+                    "0",
+                    value: Binding(
+                        get: { isEnabled ? value : 0 },
+                        set: { newValue in
+                            if isEnabled {
+                                value = min(max(newValue, 0), 100)
+                            }
+                        }
+                    ),
+                    format: .number
+                )
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 50)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isEnabled ? Color.primary.opacity(0.05) : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(isFocused ? Color.blue : Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+                .disabled(!isEnabled)
+                .focused($isFocused)
+                
+                Text("%")
+                    .foregroundStyle(isEnabled ? .primary : .secondary)
+                    .font(.body)
+            }
+        }
+        .opacity(isEnabled ? 1.0 : 0.6)
     }
 }
 
@@ -239,6 +625,7 @@ struct SubjectDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let subject: Subject
     @State private var showingNewAssignment = false
+    @State private var showingEditSubject = false
     @State private var showingDeleteConfirmation = false
     @State private var assignmentToDelete: Assignment?
     @State private var showingDeleteAssignmentConfirmation = false
@@ -315,6 +702,13 @@ struct SubjectDetailView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: {
+                        showingEditSubject = true
+                    }) {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                }
                 ToolbarItem(placement: .destructiveAction) {
                     Button(role: .destructive) {
                         showingDeleteConfirmation = true
@@ -336,6 +730,9 @@ struct SubjectDetailView: View {
         .frame(width: 700, height: 600)
         .sheet(isPresented: $showingNewAssignment) {
             NewAssignmentView(subject: subject)
+        }
+        .sheet(isPresented: $showingEditSubject) {
+            EditSubjectView(subject: subject)
         }
         .alert("Delete Assignment?", isPresented: $showingDeleteAssignmentConfirmation) {
             Button("Cancel", role: .cancel) { }

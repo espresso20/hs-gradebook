@@ -14,7 +14,9 @@
 		BB1111111111111111111111 /* SubjectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2222222222222222222222 /* SubjectsView.swift */; };
 		BB3333333333333333333333 /* AssignmentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB4444444444444444444444 /* AssignmentsView.swift */; };
 		BB5555555555555555555555 /* AdditionalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB6666666666666666666666 /* AdditionalViews.swift */; };
-		CC1111111111111111111111 /* CloudSaveManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2222222222222222222222 /* CloudSaveManager.swift */; };
+		DD1111111111111111111111 /* BackupManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD2222222222222222222222 /* BackupManager.swift */; };
+		EE1111111111111111111111 /* GradingScale.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE2222222222222222222222 /* GradingScale.swift */; };
+		FF1111111111111111111111 /* TextFieldLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2222222222222222222222 /* TextFieldLimits.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,7 +28,9 @@
 		BB2222222222222222222222 /* SubjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubjectsView.swift; sourceTree = "<group>"; };
 		BB4444444444444444444444 /* AssignmentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssignmentsView.swift; sourceTree = "<group>"; };
 		BB6666666666666666666666 /* AdditionalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdditionalViews.swift; sourceTree = "<group>"; };
-		CC2222222222222222222222 /* CloudSaveManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSaveManager.swift; sourceTree = "<group>"; };
+		DD2222222222222222222222 /* BackupManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupManager.swift; sourceTree = "<group>"; };
+		EE2222222222222222222222 /* GradingScale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GradingScale.swift; sourceTree = "<group>"; };
+		FF2222222222222222222222 /* TextFieldLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFieldLimits.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,7 +58,9 @@
 				AA2222222222222222222222 /* GradebookAppApp.swift */,
 				AA4444444444444444444444 /* ContentView.swift */,
 				AA8888888888888888888888 /* DataModels.swift */,
-				CC2222222222222222222222 /* CloudSaveManager.swift */,
+				EE2222222222222222222222 /* GradingScale.swift */,
+				FF2222222222222222222222 /* TextFieldLimits.swift */,
+				DD2222222222222222222222 /* BackupManager.swift */,
 				BB2222222222222222222222 /* SubjectsView.swift */,
 				BB4444444444444444444444 /* AssignmentsView.swift */,
 				BB6666666666666666666666 /* AdditionalViews.swift */,
@@ -137,7 +143,9 @@
 			files = (
 				AA3333333333333333333333 /* ContentView.swift in Sources */,
 				AA7777777777777777777777 /* DataModels.swift in Sources */,
-				CC1111111111111111111111 /* CloudSaveManager.swift in Sources */,
+				EE1111111111111111111111 /* GradingScale.swift in Sources */,
+				FF1111111111111111111111 /* TextFieldLimits.swift in Sources */,
+				DD1111111111111111111111 /* BackupManager.swift in Sources */,
 				AA1111111111111111111111 /* GradebookAppApp.swift in Sources */,
 				BB1111111111111111111111 /* SubjectsView.swift in Sources */,
 				BB3333333333333333333333 /* AssignmentsView.swift in Sources */,
@@ -271,11 +279,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = GradebookApp/GradebookApp.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = C3QH8W8J55;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
@@ -290,6 +300,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gradebook.GradebookApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -301,11 +312,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = GradebookApp/GradebookApp.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = C3QH8W8J55;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
@@ -320,6 +333,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.gradebook.GradebookApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};

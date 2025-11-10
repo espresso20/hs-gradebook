@@ -37,7 +37,7 @@ struct ContentView: View {
     @State private var showingNewSchoolYearSheet = false
     @State private var showingSettings = false
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
-    @StateObject private var cloudSaveManager = CloudSaveManager()
+    @EnvironmentObject var backupManager: BackupManager
     
     var body: some View {
         NavigationSplitView {
@@ -76,7 +76,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showingSettings) {
-            SettingsView(cloudSaveManager: cloudSaveManager, modelContext: modelContext, isPresented: $showingSettings)
+            SettingsView(backupManager: backupManager, modelContext: modelContext, isPresented: $showingSettings)
         }
         .onAppear {
             if selectedStudent == nil && !students.isEmpty {
@@ -90,6 +90,7 @@ struct ContentView: View {
 // MARK: - Navigation Item
 enum NavigationItem: String, CaseIterable {
     case dashboard = "Dashboard"
+    case calendar = "Calendar"
     case subjects = "Subjects"
     case assignments = "Assignments"
     case books = "Books"
@@ -102,6 +103,7 @@ enum NavigationItem: String, CaseIterable {
     var icon: String {
         switch self {
         case .dashboard: return "chart.bar.fill"
+        case .calendar: return "calendar"
         case .subjects: return "book.fill"
         case .assignments: return "doc.text.fill"
         case .books: return "books.vertical.fill"
@@ -202,9 +204,20 @@ struct SidebarView: View {
                 if selectedStudent != nil && selectedSchoolYear != nil {
                     Section("Navigation") {
                         ForEach(NavigationItem.allCases.filter { $0 != .help }, id: \.self) { item in
-                            NavigationLink(value: item) {
-                                Label(item.rawValue, systemImage: item.icon)
+                            Button(action: {
+                                selectedView = item
+                            }) {
+                                HStack {
+                                    Label(item.rawValue, systemImage: item.icon)
+                                    Spacer()
+                                    if selectedView == item {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.blue)
+                                    }
+                                }
                             }
+                            .buttonStyle(.plain)
+                            .listRowBackground(selectedView == item ? Color.blue.opacity(0.2) : Color.clear)
                         }
                     }
                 }
@@ -397,6 +410,8 @@ struct MainContentView: View {
             switch selectedView {
             case .dashboard:
                 DashboardView(student: student, schoolYear: schoolYear)
+            case .calendar:
+                CalendarView(schoolYear: schoolYear)
             case .subjects:
                 SubjectsView(schoolYear: schoolYear)
             case .assignments:
@@ -417,6 +432,420 @@ struct MainContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Calendar Event Model
+enum CalendarEventType {
+    case assignment(Assignment, Subject)
+    case activity(Activity)
+    case fieldTrip(FieldTrip)
+    case book(Book)
+    
+    var displayText: String {
+        switch self {
+        case .assignment(let assignment, _):
+            return "📝 \(assignment.title)"
+        case .activity(let activity):
+            return "🎯 \(activity.activityDescription)"
+        case .fieldTrip(let trip):
+            return "🚌 \(trip.tripDescription)"
+        case .book(let book):
+            return "📚 \(book.title)"
+        }
+    }
+}
+
+// MARK: - Calendar View
+struct CalendarView: View {
+    let schoolYear: SchoolYear
+    @State private var selectedDate = Date()
+    @State private var currentMonth = Date()
+    @State private var selectedSubject: Subject?
+    @State private var selectedBook: Book?
+    @State private var selectedActivity: Activity?
+    @State private var selectedFieldTrip: FieldTrip?
+    
+    private var calendar: Calendar {
+        Calendar.current
+    }
+    
+    private var monthYearString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter.string(from: currentMonth)
+    }
+    
+    private func daysInMonth() -> [Date?] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: currentMonth),
+              let monthFirstWeek = calendar.dateInterval(of: .weekOfMonth, for: monthInterval.start) else {
+            return []
+        }
+        
+        var days: [Date?] = []
+        var currentDate = monthFirstWeek.start
+        
+        while currentDate < monthInterval.end {
+            let monthStart = monthInterval.start
+            let monthEnd = calendar.date(byAdding: DateComponents(month: 1, day: -1), to: monthStart) ?? monthStart
+            
+            if currentDate >= monthStart && currentDate <= monthEnd {
+                days.append(currentDate)
+            } else {
+                days.append(nil)
+            }
+            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? currentDate
+        }
+        
+        return days
+    }
+    
+    private func eventsOn(date: Date) -> [CalendarEventType] {
+        var events: [CalendarEventType] = []
+        let calendar = Calendar.current
+        
+        // Check assignments
+        for subject in schoolYear.subjects {
+            for assignment in subject.assignments {
+                if calendar.isDate(assignment.date, inSameDayAs: date) {
+                    events.append(.assignment(assignment, subject))
+                }
+            }
+        }
+        
+        // Check activities
+        for activity in schoolYear.activities {
+            if calendar.isDate(activity.date, inSameDayAs: date) {
+                events.append(.activity(activity))
+            }
+        }
+        
+        // Check field trips
+        for trip in schoolYear.fieldTrips {
+            if calendar.isDate(trip.date, inSameDayAs: date) {
+                events.append(.fieldTrip(trip))
+            }
+        }
+        
+        // Check books finished
+        for book in schoolYear.books {
+            if calendar.isDate(book.dateRead, inSameDayAs: date) {
+                events.append(.book(book))
+            }
+        }
+        
+        return events
+    }
+    
+    private func handleEventTap(_ event: CalendarEventType) {
+        switch event {
+        case .assignment(_, let subject):
+            selectedSubject = subject
+        case .activity(let activity):
+            selectedActivity = activity
+        case .fieldTrip(let trip):
+            selectedFieldTrip = trip
+        case .book(let book):
+            selectedBook = book
+        }
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                // Header with month navigation
+                HStack {
+                    Button(action: {
+                        currentMonth = calendar.date(byAdding: .month, value: -1, to: currentMonth) ?? currentMonth
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Spacer()
+                    
+                    Text(monthYearString)
+                        .font(.title)
+                        .fontWeight(.bold)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        currentMonth = calendar.date(byAdding: .month, value: 1, to: currentMonth) ?? currentMonth
+                    }) {
+                        Image(systemName: "chevron.right")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button("Today") {
+                        currentMonth = Date()
+                        selectedDate = Date()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.horizontal)
+                
+                // Weekday headers
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 7), spacing: 12) {
+                    ForEach(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], id: \.self) { day in
+                        Text(day)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.horizontal)
+                
+                // Calendar grid
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 7), spacing: 12) {
+                    ForEach(0..<daysInMonth().count, id: \.self) { index in
+                        if let date = daysInMonth()[index] {
+                            DayCell(
+                                date: date,
+                                isSelected: calendar.isDate(date, inSameDayAs: selectedDate),
+                                isToday: calendar.isDateInToday(date),
+                                eventCount: eventsOn(date: date).count
+                            ) {
+                                selectedDate = date
+                            }
+                        } else {
+                            Color.clear
+                                .frame(minHeight: 70, maxHeight: 90)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                
+                Divider()
+                    .padding(.vertical)
+                
+                // Selected date events section - always visible
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Selected Date")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(selectedDate, style: .date)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                        }
+                        
+                        Spacer()
+                        
+                        if !eventsOn(date: selectedDate).isEmpty {
+                            Text("\(eventsOn(date: selectedDate).count) event\(eventsOn(date: selectedDate).count == 1 ? "" : "s")")
+                                .font(.caption)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(.blue.opacity(0.2), in: Capsule())
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    
+                    if eventsOn(date: selectedDate).isEmpty {
+                        HStack {
+                            Image(systemName: "calendar.badge.exclamationmark")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                            Text("No events on this day")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    } else {
+                        ForEach(Array(eventsOn(date: selectedDate).enumerated()), id: \.offset) { index, event in
+                            Button(action: {
+                                handleEventTap(event)
+                            }) {
+                                HStack(spacing: 12) {
+                                    Text(event.displayText)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    
+                                    // Show indicator - all events are clickable now
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding()
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .padding()
+        }
+        .navigationTitle("Calendar")
+        .sheet(item: $selectedSubject) { subject in
+            SubjectDetailView(subject: subject)
+        }
+        .sheet(item: $selectedBook) { book in
+            BookDetailSheet(book: book)
+        }
+        .sheet(item: $selectedActivity) { activity in
+            ActivityDetailSheet(activity: activity)
+        }
+        .sheet(item: $selectedFieldTrip) { trip in
+            FieldTripDetailSheet(trip: trip)
+        }
+    }
+}
+
+// MARK: - Detail Sheets for Calendar Events
+
+struct BookDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let book: Book
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Book Information") {
+                    LabeledContent("Title", value: book.title)
+                    LabeledContent("Author", value: book.author)
+                    LabeledContent("Date Finished") {
+                        Text(book.dateRead, style: .date)
+                    }
+                }
+                
+                if !book.notes.isEmpty {
+                    Section("Notes") {
+                        Text(book.notes)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Book Details")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(width: 450, height: 350)
+    }
+}
+
+struct ActivityDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let activity: Activity
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Activity Information") {
+                    LabeledContent("Description", value: activity.activityDescription)
+                    LabeledContent("Role", value: activity.role)
+                    LabeledContent("Date") {
+                        Text(activity.date, style: .date)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Activity Details")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(width: 450, height: 300)
+    }
+}
+
+struct FieldTripDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let trip: FieldTrip
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Field Trip Information") {
+                    LabeledContent("Description", value: trip.tripDescription)
+                    LabeledContent("Location", value: trip.location)
+                    LabeledContent("Date") {
+                        Text(trip.date, style: .date)
+                    }
+                }
+                
+                if !trip.notes.isEmpty {
+                    Section("Notes") {
+                        Text(trip.notes)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Field Trip Details")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(width: 450, height: 350)
+    }
+}
+
+struct DayCell: View {
+    let date: Date
+    let isSelected: Bool
+    let isToday: Bool
+    let eventCount: Int
+    let action: () -> Void
+    
+    @State private var isHovering = false
+    
+    private var dayNumber: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d"
+        return formatter.string(from: date)
+    }
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(dayNumber)
+                .font(.system(size: 16, weight: isToday ? .bold : .regular))
+                .foregroundStyle(isSelected ? .white : (isToday ? .blue : .primary))
+            
+            if eventCount > 0 {
+                HStack(spacing: 3) {
+                    ForEach(0..<min(eventCount, 3), id: \.self) { _ in
+                        Circle()
+                            .fill(isSelected ? .white : .blue)
+                            .frame(width: 5, height: 5)
+                    }
+                }
+            } else {
+                Spacer()
+                    .frame(height: 5)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 70, maxHeight: 90)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected ? Color.blue : (isToday ? Color.blue.opacity(0.15) : (isHovering ? Color.gray.opacity(0.1) : Color.clear)))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isSelected ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 2)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            action()
+        }
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 
@@ -634,18 +1063,55 @@ struct NewSchoolYearView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     let student: Student
-    @State private var year = ""
     @State private var startDate = Date()
     @State private var endDate = Calendar.current.date(byAdding: .month, value: 9, to: Date()) ?? Date()
     @State private var totalDays = 180
+    @State private var useCustomName = false
+    @State private var customYear = ""
+    
+    private var autoGeneratedYear: String {
+        let calendar = Calendar.current
+        let startYear = calendar.component(.year, from: startDate)
+        let endYear = calendar.component(.year, from: endDate)
+        
+        if startYear == endYear {
+            return "\(startYear)"
+        } else {
+            return "\(startYear)-\(endYear)"
+        }
+    }
+    
+    private var finalYearName: String {
+        useCustomName && !customYear.isEmpty ? customYear : autoGeneratedYear
+    }
     
     var body: some View {
         NavigationStack {
             Form {
                 Section("School Year Information") {
-                    TextField("Year (e.g., 2024-2025)", text: $year)
                     DatePicker("Start Date", selection: $startDate, displayedComponents: .date)
                     DatePicker("End Date", selection: $endDate, displayedComponents: .date)
+                    
+                    Divider()
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Custom Year Name", isOn: $useCustomName)
+                        
+                        if useCustomName {
+                            TextField("e.g., 2024-2025", text: $customYear)
+                                .characterLimit(CharacterLimits.shortIdentifier, text: $customYear)
+                        } else {
+                            HStack {
+                                Text("Year Name:")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(autoGeneratedYear)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                    
                     Stepper("Total School Days: \(totalDays)", value: $totalDays, in: 1...365)
                 }
             }
@@ -658,7 +1124,7 @@ struct NewSchoolYearView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Create") {
                         let schoolYear = SchoolYear(
-                            year: year,
+                            year: finalYearName,
                             startDate: startDate,
                             endDate: endDate,
                             totalSchoolDays: totalDays
@@ -667,11 +1133,10 @@ struct NewSchoolYearView: View {
                         modelContext.insert(schoolYear)
                         dismiss()
                     }
-                    .disabled(year.isEmpty)
                 }
             }
         }
-        .frame(width: 450, height: 350)
+        .frame(width: 450, height: 420)
     }
 }
 
@@ -727,11 +1192,13 @@ enum HelpSection: String, CaseIterable {
     case schoolYears = "School Years"
     case subjects = "Subjects & Grading"
     case assignments = "Assignments"
+    case calendar = "Calendar"
     case books = "Reading List"
     case activities = "Activities"
     case fieldTrips = "Field Trips"
     case courses = "Course Descriptions"
     case reports = "Reports"
+    case gradingScales = "Grading Scales"
     case tips = "Tips & Tricks"
     
     var title: String { rawValue }
@@ -741,14 +1208,16 @@ enum HelpSection: String, CaseIterable {
         case .gettingStarted: return "flag.fill"
         case .compatibility: return "checkmark.shield.fill"
         case .students: return "person.fill"
-        case .schoolYears: return "calendar"
+        case .schoolYears: return "calendar.badge.clock"
         case .subjects: return "book.fill"
         case .assignments: return "doc.text.fill"
+        case .calendar: return "calendar"
         case .books: return "books.vertical.fill"
         case .activities: return "figure.run"
         case .fieldTrips: return "bus.fill"
         case .courses: return "graduationcap.fill"
         case .reports: return "chart.line.uptrend.xyaxis"
+        case .gradingScales: return "percent"
         case .tips: return "lightbulb.fill"
         }
     }
@@ -771,6 +1240,8 @@ struct HelpContentView: View {
             SubjectsHelpContent()
         case .assignments:
             AssignmentsHelpContent()
+        case .calendar:
+            CalendarHelpContent()
         case .books:
             BooksHelpContent()
         case .activities:
@@ -781,6 +1252,8 @@ struct HelpContentView: View {
             CoursesHelpContent()
         case .reports:
             ReportsHelpContent()
+        case .gradingScales:
+            GradingScalesHelpContent()
         case .tips:
             TipsHelpContent()
         }
@@ -878,13 +1351,21 @@ struct SchoolYearsHelpContent: View {
             HelpHeader(title: "School Years")
             
             HelpSubheader(title: "Creating a School Year")
-            HelpParagraph(text: "Expand a student in the sidebar and click 'Add School Year'. Enter the year (e.g., '2024-2025'), start date, end date, and total school days (default: 180).")
+            HelpParagraph(text: "Expand a student in the sidebar and click 'Add School Year'. Select start and end dates, and the year name is automatically generated!")
+            
+            HelpSubheader(title: "Smart Year Names")
+            HelpParagraph(text: "Year names are auto-generated from your dates:")
+            HelpBullet(text: "Aug 2024 → June 2025 = '2024-2025'")
+            HelpBullet(text: "Jan 2025 → Dec 2025 = '2025'")
+            HelpBullet(text: "Toggle 'Custom Year Name' if you want something different")
+            
+            HelpSubheader(title: "School Days")
+            HelpParagraph(text: "Set the total number of school days (default: 180). This helps track completion progress throughout the year.")
             
             HelpSubheader(title: "Managing School Years")
             HelpParagraph(text: "You can have multiple school years per student to track progress over time. Each school year contains its own subjects, assignments, books, activities, field trips, and courses.")
             
-            HelpSubheader(title: "Deleting a School Year")
-            HelpParagraph(text: "Right-click on a school year and select 'Delete School Year'. This will remove all associated data for that year.")
+            HelpTip(text: "Smart year naming prevents mismatches between year labels and actual date ranges!")
         }
     }
 }
@@ -897,26 +1378,33 @@ struct SubjectsHelpContent: View {
             HelpSubheader(title: "Creating a Subject")
             HelpParagraph(text: "Navigate to 'Subjects' and click the + button. Enter the subject name, credits, and choose a color for easy identification.")
             
-            HelpSubheader(title: "Grade Weights")
-            HelpParagraph(text: "Customize how different assignment types contribute to the final grade:")
+            HelpSubheader(title: "Assignment Type Weights")
+            HelpParagraph(text: "Customize which assignment types count toward the final grade:")
             HelpBullet(text: "Daily: Homework and daily work")
             HelpBullet(text: "Quizzes: Short assessments")
             HelpBullet(text: "Tests: Major exams")
             HelpBullet(text: "Projects: Long-term assignments")
             HelpBullet(text: "Other: Additional work")
             
-            HelpParagraph(text: "The total must equal 100%. Default weights are: Daily 20%, Quizzes 20%, Tests 30%, Projects 20%, Other 10%.")
+            HelpSubheader(title: "Setting Weights")
+            HelpParagraph(text: "Use toggles to enable/disable assignment types and enter exact percentages:")
+            HelpBullet(text: "Toggle each type on or off")
+            HelpBullet(text: "Type exact percentages in the text fields")
+            HelpBullet(text: "Total must equal 100%")
+            HelpBullet(text: "Auto-distribution when you enable a new type")
             
-            HelpSubheader(title: "Grade Calculation")
-            HelpParagraph(text: "Grades are automatically calculated based on the weighted average of assignments in each category. Only categories with assignments are counted, so you can have assignments in just one category and still get accurate grades.")
+            HelpParagraph(text: "You can use as few or as many types as you want! Only tests? Just toggle Tests to 100%.")
             
-            HelpSubheader(title: "Letter Grades")
-            HelpParagraph(text: "Letter grades are assigned as follows:")
-            HelpBullet(text: "A+: 98-100%  |  A: 93-97%  |  A-: 90-92%")
-            HelpBullet(text: "B+: 88-89%  |  B: 83-87%  |  B-: 80-82%")
-            HelpBullet(text: "C+: 78-79%  |  C: 73-77%  |  C-: 70-72%")
-            HelpBullet(text: "D+: 68-69%  |  D: 63-67%  |  D-: 60-62%")
-            HelpBullet(text: "F: Below 60%")
+            HelpSubheader(title: "Editing Subjects")
+            HelpParagraph(text: "Click on a subject card to view details. In the detail view:")
+            HelpBullet(text: "Click the ✏️ Edit button in the toolbar")
+            HelpBullet(text: "Change name, credits, color, or weights")
+            HelpBullet(text: "Grades automatically recalculate for all assignments")
+            
+            HelpSubheader(title: "Character Limits")
+            HelpParagraph(text: "Subject names are limited to 50 characters for clean display throughout the app.")
+            
+            HelpTip(text: "See the 'Grading Scales' help section to learn about switching between granular and simple grading scales!")
         }
     }
 }
@@ -933,20 +1421,22 @@ struct AssignmentsHelpContent: View {
             
             HelpSubheader(title: "Assignment Details")
             HelpParagraph(text: "For each assignment, enter:")
-            HelpBullet(text: "Title: Name of the assignment")
-            HelpBullet(text: "Type: Daily, Quiz, Test, Project, or Other")
+            HelpBullet(text: "Title: Name of the assignment (max 50 characters)")
+            HelpBullet(text: "Type: Only types enabled in the subject appear")
             HelpBullet(text: "Date: When the assignment was completed")
-            HelpBullet(text: "Score: Points earned (e.g., 47)")
-            HelpBullet(text: "Max Score: Total points possible (e.g., 50)")
-            HelpBullet(text: "Notes: Optional additional information")
+            HelpBullet(text: "Score: Points earned (displayed side-by-side)")
+            HelpBullet(text: "Max Score: Total points possible")
+            HelpBullet(text: "Notes: Optional notes (max 1000 characters)")
             
-            HelpParagraph(text: "The percentage is automatically calculated from the score and max score.")
+            HelpParagraph(text: "The percentage is automatically calculated and color-coded: green (90-100%), blue (80-89%), orange (70-79%), or red (below 70%).")
             
             HelpSubheader(title: "Viewing Assignments")
-            HelpParagraph(text: "Use the filter buttons at the top to view assignments by type (All, Daily, Quiz, Test, Project, Other). Use the search bar to find specific assignments.")
+            HelpParagraph(text: "Use the filter buttons at the top to view assignments by type. Only enabled assignment types appear in the type picker.")
             
-            HelpSubheader(title: "Deleting Assignments")
-            HelpParagraph(text: "Right-click on an assignment and select 'Delete Assignment' to remove it.")
+            HelpSubheader(title: "Viewing on Calendar")
+            HelpParagraph(text: "All assignments appear on the Calendar view on their due dates. Click any assignment in the calendar to jump to its subject details!")
+            
+            HelpTip(text: "Assignment titles are limited to 50 characters to keep the UI clean and readable.")
         }
     }
 }
@@ -1039,6 +1529,73 @@ struct ReportsHelpContent: View {
             
             HelpSubheader(title: "Exporting Reports")
             HelpParagraph(text: "Use the 'Export as PDF' button to save a professional report that can be printed or shared. Reports are formatted for official record-keeping and transcript purposes.")
+        }
+    }
+}
+
+struct CalendarHelpContent: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HelpHeader(title: "Calendar")
+            
+            HelpParagraph(text: "The Calendar view provides a visual overview of all your school activities, assignments, books finished, field trips, and more.")
+            
+            HelpSubheader(title: "Viewing the Calendar")
+            HelpBullet(text: "Navigate between months using the ◀ ▶ arrows")
+            HelpBullet(text: "Click 'Today' to jump to the current date")
+            HelpBullet(text: "Blue dots on dates indicate events")
+            HelpBullet(text: "Click any date to see events for that day")
+            
+            HelpSubheader(title: "Calendar Events")
+            HelpParagraph(text: "The calendar shows:")
+            HelpBullet(text: "📝 Assignments (due dates)")
+            HelpBullet(text: "📚 Books (dates finished)")
+            HelpBullet(text: "🎯 Activities (activity dates)")
+            HelpBullet(text: "🚌 Field Trips (trip dates)")
+            
+            HelpSubheader(title: "Clickable Events")
+            HelpParagraph(text: "All calendar events are clickable! When you click an event:")
+            HelpBullet(text: "Assignments → Opens the subject detail view")
+            HelpBullet(text: "Books → Shows book details and notes")
+            HelpBullet(text: "Activities → Displays activity information")
+            HelpBullet(text: "Field Trips → Shows trip details and notes")
+            
+            HelpTip(text: "Use the calendar to quickly see what's coming up or review what was completed on any day!")
+        }
+    }
+}
+
+struct GradingScalesHelpContent: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HelpHeader(title: "Grading Scales")
+            
+            HelpParagraph(text: "Gradebook Plus supports two grading scales that you can switch between at any time.")
+            
+            HelpSubheader(title: "Granular Scale (Default)")
+            HelpParagraph(text: "This scale includes plus/minus grades for more detailed grading:")
+            HelpBullet(text: "A+: 98-100% | A: 93-97% | A-: 90-92%")
+            HelpBullet(text: "B+: 88-89% | B: 83-87% | B-: 80-82%")
+            HelpBullet(text: "C+: 78-79% | C: 73-77% | C-: 70-72%")
+            HelpBullet(text: "D+: 68-69% | D: 63-67% | D-: 60-62%")
+            HelpBullet(text: "F: Below 60%")
+            
+            HelpSubheader(title: "Simple Scale")
+            HelpParagraph(text: "This scale uses only letter grades without plus/minus:")
+            HelpBullet(text: "A: 90-100%")
+            HelpBullet(text: "B: 80-89%")
+            HelpBullet(text: "C: 70-79%")
+            HelpBullet(text: "D: 60-69%")
+            HelpBullet(text: "F: Below 60%")
+            
+            HelpSubheader(title: "Changing Grading Scales")
+            HelpStep(number: 1, title: "Open Settings", description: "Click the ⚙️ Settings button at the bottom of the sidebar")
+            HelpStep(number: 2, title: "Select Grading Scale", description: "Click the 'Grading Scale' tab")
+            HelpStep(number: 3, title: "Choose Your Scale", description: "Select either Granular or Simple scale")
+            
+            HelpParagraph(text: "All grades throughout the app (dashboard, subjects, reports, PDFs) will update immediately to use the selected scale.")
+            
+            HelpTip(text: "Your grading scale choice is saved and persists between app launches.")
         }
     }
 }
@@ -1191,7 +1748,7 @@ struct HelpWarning: View {
 // MARK: - Settings View
 
 struct SettingsView: View {
-    @ObservedObject var cloudSaveManager: CloudSaveManager
+    @ObservedObject var backupManager: BackupManager
     let modelContext: ModelContext
     @Binding var isPresented: Bool
     @State private var selectedTab = 0
@@ -1215,7 +1772,8 @@ struct SettingsView: View {
             
             // Tab Selection
             Picker("", selection: $selectedTab) {
-                Text("Cloud Save").tag(0)
+                Text("Cloud Backup").tag(0)
+                Text("Grading Scale").tag(1)
             }
             .pickerStyle(.segmented)
             .padding()
@@ -1226,7 +1784,10 @@ struct SettingsView: View {
             ScrollView {
                 switch selectedTab {
                 case 0:
-                    CloudSettingsContent(cloudSaveManager: cloudSaveManager, modelContext: modelContext)
+                    BackupSettingsContent(backupManager: backupManager, modelContext: modelContext)
+                        .padding()
+                case 1:
+                    GradingScaleSettingsContent()
                         .padding()
                 default:
                     EmptyView()
@@ -1237,278 +1798,392 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Cloud Save Settings Content
+// MARK: - Backup Settings Content
 
-struct CloudSettingsContent: View {
-    @ObservedObject var cloudSaveManager: CloudSaveManager
+struct BackupSettingsContent: View {
+    @ObservedObject var backupManager: BackupManager
     let modelContext: ModelContext
-    
-    @State private var accessKey = ""
-    @State private var secretKey = ""
-    @State private var bucket = ""
-    @State private var region = "us-east-1"
-    @State private var showingCredentialForm = false
-    @State private var showingSaveConfirmation = false
+    @State private var showingGoogleBackupConfirmation = false
+    @State private var showingImportConfirmation = false
+    @State private var showingImportSuccess = false
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             // Description
-            Text("Configure automatic cloud saving to AWS S3. Your data will be saved to your personal S3 bucket on app close and can be manually saved anytime.")
+            Text("Choose how you want to backup your gradebook data. You can use iCloud for automatic sync, Google Drive for manual backups, or keep everything local.")
                 .font(.body)
                 .foregroundStyle(.secondary)
             
-            // Credentials Status
-            HStack {
-                Image(systemName: cloudSaveManager.credentialsConfigured ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(cloudSaveManager.credentialsConfigured ? .green : .red)
-                    .font(.title2)
+            Divider()
+            
+            // Backup Method Selection
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Backup Method")
+                    .font(.title3)
+                    .fontWeight(.semibold)
                 
+                ForEach(BackupManager.BackupMethod.allCases, id: \.self) { method in
+                    BackupMethodCard(
+                        method: method,
+                        isSelected: selectedBackupMethod == method,
+                        isAvailable: isMethodAvailable(method),
+                        action: {
+                            selectBackupMethod(method)
+                        }
+                    )
+                }
+            }
+            
+            // Method-specific details
+            if selectedBackupMethod == .iCloud && iCloudSyncEnabled {
+                iCloudDetailsSection
+            } else if selectedBackupMethod == .googleDrive && backupManager.googleDriveConnected {
+                googleDriveDetailsSection
+            }
+        }
+        .alert("Backup Saved", isPresented: $showingGoogleBackupConfirmation) {
+            Button("OK") { }
+        } message: {
+            Text("Your gradebook backup has been saved as a JSON file. You can store this file anywhere for safekeeping.")
+        }
+        .alert("Import Backup - Warning", isPresented: $showingImportConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Import", role: .destructive) {
+                Task {
+                    let success = await backupManager.importBackup(modelContext: modelContext)
+                    if success {
+                        showingImportSuccess = true
+                    }
+                }
+            }
+        } message: {
+            Text("⚠️ This will REPLACE ALL current data with the backup file.\n\nYour existing data will be automatically backed up to:\n~/Documents/GradebookBackups/\n\nThis cannot be undone. Are you sure you want to continue?")
+        }
+        .alert("Import Successful", isPresented: $showingImportSuccess) {
+            Button("OK") { }
+        } message: {
+            Text("Your backup has been successfully imported!\n\nYour previous data was saved to:\n~/Documents/GradebookBackups/")
+        }
+    }
+    
+    // MARK: - Computed Properties
+    
+    private var selectedBackupMethod: BackupManager.BackupMethod {
+        if iCloudSyncEnabled {
+            return .iCloud
+        } else if backupManager.googleDriveConnected {
+            return .googleDrive
+        } else {
+            return .none
+        }
+    }
+    
+    // MARK: - Helper Functions
+    
+    private func isMethodAvailable(_ method: BackupManager.BackupMethod) -> Bool {
+        switch method {
+        case .none:
+            return true
+        case .iCloud:
+            return backupManager.iCloudAvailable
+        case .googleDrive:
+            return true // Always available to connect
+        }
+    }
+    
+    private func selectBackupMethod(_ method: BackupManager.BackupMethod) {
+        // Disable all first
+        iCloudSyncEnabled = false
+        backupManager.googleDriveConnected = false
+        
+        // Enable selected
+        switch method {
+        case .none:
+            break // Keep all disabled
+        case .iCloud:
+            if backupManager.iCloudAvailable {
+                iCloudSyncEnabled = true
+                backupManager.selectedBackupMethod = .iCloud
+            }
+        case .googleDrive:
+            backupManager.connectGoogleDrive()
+            backupManager.selectedBackupMethod = .googleDrive
+        }
+    }
+    
+    // MARK: - Detail Sections
+    
+    private var iCloudDetailsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.title3)
+                Text("iCloud sync is active. Your data automatically syncs across all your Apple devices.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+    
+    private var googleDriveDetailsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            
+            if let lastBackup = backupManager.lastGoogleBackup {
+                HStack {
+                    Image(systemName: "clock.fill")
+                        .foregroundStyle(.blue)
+                    Text("Last backup: \(lastBackup.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                }
+            }
+            
+            HStack(spacing: 12) {
+                Button(action: {
+                    Task {
+                        await backupManager.backupToGoogleDrive(modelContext: modelContext)
+                        // Only show confirmation if no error
+                        if backupManager.backupError == nil {
+                            showingGoogleBackupConfirmation = true
+                        }
+                    }
+                }) {
+                    HStack {
+                        if backupManager.isBackingUp {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.up.doc.fill")
+                        }
+                        Text(backupManager.isBackingUp ? "Exporting..." : "Export Backup")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(backupManager.isBackingUp)
+                
+                Button(action: {
+                    showingImportConfirmation = true
+                }) {
+                    HStack {
+                        Image(systemName: "arrow.down.doc.fill")
+                        Text("Import Backup")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                }
+                .buttonStyle(.bordered)
+                .disabled(backupManager.isBackingUp)
+            }
+            
+            if let error = backupManager.backupError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Backup Method Card
+
+struct BackupMethodCard: View {
+    let method: BackupManager.BackupMethod
+    let isSelected: Bool
+    let isAvailable: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Icon
+                Image(systemName: method.icon)
+                    .font(.system(size: 32))
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+                    .frame(width: 50)
+                
+                // Content
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("AWS Credentials")
+                    Text(method.rawValue)
                         .font(.headline)
-                    Text(cloudSaveManager.credentialsConfigured ? "Configured ✓" : "Not Configured")
+                        .foregroundStyle(.primary)
+                    Text(method.description)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
                 }
                 
                 Spacer()
                 
-                if cloudSaveManager.credentialsConfigured {
-                    Button("Reconfigure") {
-                        showingCredentialForm = true
-                    }
-                    .buttonStyle(.bordered)
+                // Selection indicator
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
                 } else {
-                    Button("Configure") {
-                        showingCredentialForm = true
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Image(systemName: "circle")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding()
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.blue : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!isAvailable && method != .none)
+        .opacity(isAvailable || method == .none ? 1.0 : 0.5)
+    }
+}
+
+// MARK: - Grading Scale Settings Content
+
+struct GradingScaleSettingsContent: View {
+    @AppStorage("gradingScaleType") private var gradingScaleTypeRaw: String = GradingScaleType.granular.rawValue
+    
+    private var gradingScaleType: GradingScaleType {
+        GradingScaleType(rawValue: gradingScaleTypeRaw) ?? .granular
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // Description
+            Text("Choose how you want grades to be calculated and displayed throughout the app. This affects grade reports, dashboards, and all grade displays.")
+                .font(.body)
+                .foregroundStyle(.secondary)
             
-            if cloudSaveManager.credentialsConfigured {
-                Divider()
+            Divider()
+            
+            // Scale Selection
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Grading Scale Type")
+                    .font(.title3)
+                    .fontWeight(.semibold)
                 
-                // Last Save Info
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Save Status")
-                        .font(.headline)
-                    
-                    if let lastSave = cloudSaveManager.lastSaveDate {
-                        HStack {
-                            Image(systemName: "clock.fill")
-                                .foregroundStyle(.blue)
-                            Text("Last saved: \(lastSave.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.body)
+                ForEach(GradingScaleType.allCases, id: \.self) { scaleType in
+                    GradingScaleOptionCard(
+                        scaleType: scaleType,
+                        isSelected: gradingScaleType == scaleType,
+                        action: {
+                            gradingScaleTypeRaw = scaleType.rawValue
                         }
-                    } else {
-                        HStack {
-                            Image(systemName: "info.circle")
-                                .foregroundStyle(.secondary)
-                            Text("No cloud saves yet")
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                
-                Divider()
-                
-                // Manual Save Button
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Manual Save")
-                        .font(.headline)
-                    
-                    Button(action: {
-                        Task {
-                            await cloudSaveManager.saveToCloud(modelContext: modelContext)
-                            showingSaveConfirmation = true
-                        }
-                    }) {
-                        HStack {
-                            if cloudSaveManager.isSaving {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .padding(.trailing, 4)
-                            } else {
-                                Image(systemName: "arrow.up.doc.fill")
-                            }
-                            Text(cloudSaveManager.isSaving ? "Saving..." : "Save to Cloud Now")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(cloudSaveManager.isSaving)
-                    
-                    if let error = cloudSaveManager.saveError {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.red)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                
-                Divider()
-                
-                // Auto-save info
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Automatic Save")
-                        .font(.headline)
-                    Text("Your gradebook data automatically saves to the cloud when you close the app.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                    
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        Text("Auto-save on quit: Enabled")
-                            .font(.body)
-                    }
+                    )
                 }
             }
             
             Divider()
             
-            // Security Notice
+            // Scale Preview
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Current Scale Preview")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                
+                let currentScale = GradingScaleDefinition.scale(for: gradingScaleType)
+                
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(currentScale) { grade in
+                        HStack {
+                            Text(grade.letter)
+                                .fontWeight(.bold)
+                                .frame(width: 30, alignment: .leading)
+                            Text("=")
+                                .foregroundStyle(.secondary)
+                            Text(grade.range)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .padding()
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+            }
+            
+            Divider()
+            
+            // Info
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "lock.shield.fill")
+                Image(systemName: "info.circle.fill")
                     .foregroundStyle(.blue)
                     .font(.title3)
-                
-                Text("Your AWS credentials are stored securely in macOS Keychain and encrypted. Once configured, they cannot be viewed again for security.")
+                Text("Changing the grading scale will immediately update all grades throughout the app. Existing percentage scores will be re-evaluated using the new scale.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding()
             .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-            
-            // File Format Notice
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "info.circle.fill")
-                    .foregroundStyle(.orange)
-                    .font(.title3)
-                
-                Text("Save will create a new file in your S3 bucket each time. Format: gradebook-YYYY-MM-DDTHH-MM-SS.json")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-        }
-        .sheet(isPresented: $showingCredentialForm) {
-            CredentialConfigurationSheet(
-                cloudSaveManager: cloudSaveManager,
-                accessKey: $accessKey,
-                secretKey: $secretKey,
-                bucket: $bucket,
-                region: $region,
-                isPresented: $showingCredentialForm
-            )
-        }
-        .alert("Saved to Cloud", isPresented: $showingSaveConfirmation) {
-            Button("OK") { }
-        } message: {
-            Text("Your gradebook has been successfully saved to AWS S3.")
         }
     }
 }
 
-struct CredentialConfigurationSheet: View {
-    @ObservedObject var cloudSaveManager: CloudSaveManager
-    @Binding var accessKey: String
-    @Binding var secretKey: String
-    @Binding var bucket: String
-    @Binding var region: String
-    @Binding var isPresented: Bool
+// MARK: - Grading Scale Option Card
+
+struct GradingScaleOptionCard: View {
+    let scaleType: GradingScaleType
+    let isSelected: Bool
+    let action: () -> Void
     
     var body: some View {
-        VStack(spacing: 20) {
-            HStack {
-                Text("AWS S3 Configuration")
-                    .font(.title2)
-                    .fontWeight(.bold)
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Icon
+                Image(systemName: scaleType == .granular ? "list.number" : "list.bullet")
+                    .font(.system(size: 32))
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+                    .frame(width: 50)
+                
+                // Content
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(scaleType.displayName)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(scaleType.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                
                 Spacer()
-                Button("Cancel") {
-                    isPresented = false
-                }
-                .keyboardShortcut(.escape)
-            }
-            
-            Form {
-                Section("AWS Credentials") {
-                    TextField("Access Key ID", text: $accessKey)
-                        .textFieldStyle(.roundedBorder)
-                    
-                    SecureField("Secret Access Key", text: $secretKey)
-                        .textFieldStyle(.roundedBorder)
-                }
                 
-                Section("S3 Bucket Configuration") {
-                    TextField("Bucket Name", text: $bucket)
-                        .textFieldStyle(.roundedBorder)
-                    
-                    Picker("Region", selection: $region) {
-                        Text("US East (N. Virginia)").tag("us-east-1")
-                        Text("US East (Ohio)").tag("us-east-2")
-                        Text("US West (N. California)").tag("us-west-1")
-                        Text("US West (Oregon)").tag("us-west-2")
-                        Text("EU (Ireland)").tag("eu-west-1")
-                        Text("EU (Frankfurt)").tag("eu-central-1")
-                        Text("Asia Pacific (Tokyo)").tag("ap-northeast-1")
-                        Text("Asia Pacific (Sydney)").tag("ap-southeast-2")
-                    }
-                }
-                
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "lock.shield.fill")
-                                .foregroundStyle(.blue)
-                            Text("Security Notice")
-                                .font(.headline)
-                        }
-                        
-                        Text("Credentials are encrypted and stored in macOS Keychain. Once saved, they cannot be viewed again. To change credentials, you must enter new ones.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                // Selection indicator
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.blue)
+                } else {
+                    Image(systemName: "circle")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .formStyle(.grouped)
-            
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    isPresented = false
-                }
-                .keyboardShortcut(.cancelAction)
-                
-                Button("Save Credentials") {
-                    cloudSaveManager.saveCredentials(
-                        accessKey: accessKey,
-                        secretKey: secretKey,
-                        bucket: bucket,
-                        region: region
-                    )
-                    accessKey = ""
-                    secretKey = ""
-                    bucket = ""
-                    region = "us-east-1"
-                    isPresented = false
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(accessKey.isEmpty || secretKey.isEmpty || bucket.isEmpty)
-                .keyboardShortcut(.defaultAction)
-            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.blue : Color.secondary.opacity(0.3), lineWidth: isSelected ? 2 : 1)
+            )
         }
-        .padding(30)
-        .frame(width: 600, height: 550)
+        .buttonStyle(.plain)
     }
 }
 
